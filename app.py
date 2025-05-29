@@ -4,7 +4,7 @@ import plotly.express as px
 
 @st.cache_data
 def carregar_dados():
-    df = pd.read_excel("lista_verificacao_epi.xlsx", engine="openpyxl")
+    df = pd.read_excel("LISTA DE VERIFICAÇÃO EPI.xlsx", engine="openpyxl")
     df['Data_Inspecao'] = pd.to_datetime(df['Data_Inspecao'])
     return df
 
