@@ -1,131 +1,101 @@
-{
-  "nbformat": 4,
-  "nbformat_minor": 0,
-  "metadata": {
-    "colab": {
-      "provenance": [],
-      "mount_file_id": "1HctDrwGuGYG4awnq4o7qopdFXYxCVRiU",
-      "authorship_tag": "ABX9TyPnXvW4ZguMMOHMDyDKkU7A",
-      "include_colab_link": true
-    },
-    "kernelspec": {
-      "name": "python3",
-      "display_name": "Python 3"
-    },
-    "language_info": {
-      "name": "python"
-    }
-  },
-  "cells": [
-    {
-      "cell_type": "markdown",
-      "metadata": {
-        "id": "view-in-github",
-        "colab_type": "text"
-      },
-      "source": [
-        "<a href=\"https://colab.research.google.com/github/Patriciazambianco/DASHBOARD-EPI/blob/main/app.py\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
-      ]
-    },
-    {
-      "cell_type": "code",
-      "source": [
-        "import streamlit as st\n",
-        "import pandas as pd\n",
-        "import plotly.express as px\n",
-        "\n",
-        "st.set_page_config(page_title=\"Dashboard EPI\", layout=\"wide\")\n",
-        "\n",
-        "st.title(\"🛡️ Relatório de EPI - Painel Interativo\")\n",
-        "\n",
-        "uploaded_file = st.file_uploader(\"📁 Envie seu arquivo CSV com os dados de EPI\", type=[\"csv\"])\n",
-        "\n",
-        "if uploaded_file:\n",
-        "    df = pd.read_csv(uploaded_file)\n",
-        "    df['DATA_INSPECAO'] = pd.to_datetime(df['DATA_INSPECAO'], errors='coerce')\n",
-        "\n",
-        "    st.subheader(\"📊 Dados Originais\")\n",
-        "    st.dataframe(df)\n",
-        "\n",
-        "    # Última inspeção por técnico e produto\n",
-        "    df = df.sort_values(['TECNICO', 'PRODUTO_SIMILAR', 'DATA_INSPECAO'], ascending=[True, True, False])\n",
-        "    df_unique = df.drop_duplicates(subset=['TECNICO', 'PRODUTO_SIMILAR'], keep='first')\n",
-        "\n",
-        "    # Define se está pendente (sem data ou >180 dias)\n",
-        "    hoje = pd.Timestamp.today()\n",
-        "    df_unique['STATUS'] = df_unique['DATA_INSPECAO'].apply(\n",
-        "        lambda x: 'PENDENTE' if pd.isna(x) or (hoje - x).days > 180 else 'OK'\n",
-        "    )\n",
-        "\n",
-        "    # Filtros (sidebar pra liberar espaço!)\n",
-        "    st.sidebar.header(\"🔎 Filtros\")\n",
-        "    gerente = st.sidebar.selectbox(\"Filtrar por Gerente\", options=[\"Todos\"] + sorted(df_unique['GERENTE_IMEDIATO'].dropna().unique()))\n",
-        "    coordenador = st.sidebar.selectbox(\"Filtrar por Coordenador\", options=[\"Todos\"] + sorted(df_unique['COORDENADOR_IMEDIATO'].dropna().unique()))\n",
-        "\n",
-        "    if gerente != \"Todos\":\n",
-        "        df_unique = df_unique[df_unique['GERENTE_IMEDIATO'] == gerente]\n",
-        "    if coordenador != \"Todos\":\n",
-        "        df_unique = df_unique[df_unique['COORDENADOR_IMEDIATO'] == coordenador]\n",
-        "\n",
-        "    # KPIs\n",
-        "    total_registros = df_unique.shape[0]\n",
-        "    total_ok = df_unique[df_unique['STATUS'] == 'OK'].shape[0]\n",
-        "    total_pendente = total_registros - total_ok\n",
-        "    pct_ok = (total_ok / total_registros * 100) if total_registros > 0 else 0\n",
-        "\n",
-        "    st.subheader(\"✅ Visão Geral\")\n",
-        "    col1, col2, col3 = st.columns(3)\n",
-        "    col1.metric(\"Total de Registros\", total_registros)\n",
-        "    col2.metric(\"Com EPI OK\", total_ok)\n",
-        "    col3.metric(\"Pendentes\", total_pendente)\n",
-        "\n",
-        "    st.progress(pct_ok / 100)\n",
-        "\n",
-        "    # Gráfico de situação\n",
-        "    status_count = df_unique['STATUS'].value_counts().reset_index()\n",
-        "    fig_status = px.pie(status_count, names='index', values='STATUS', title='Distribuição de Situação EPI')\n",
-        "    st.plotly_chart(fig_status, use_container_width=True)\n",
-        "\n",
-        "    # Ranking por coordenador\n",
-        "    st.subheader(\"🏆 Registros por Coordenador\")\n",
-        "    coord_count = df_unique['COORDENADOR_IMEDIATO'].value_counts().reset_index()\n",
-        "    coord_count.columns = ['COORDENADOR', 'QTD']\n",
-        "    fig_coord = px.bar(coord_count, x='COORDENADOR', y='QTD', title='Quantidade por Coordenador')\n",
-        "    st.plotly_chart(fig_coord, use_container_width=True)\n",
-        "\n",
-        "    # Mostrar dados finais\n",
-        "    with st.expander(\"📋 Visualizar dados filtrados\"):\n",
-        "        st.dataframe(df_unique)\n",
-        "\n",
-        "else:\n",
-        "    st.info(\"👆 Envie um arquivo CSV para visualizar o painel.\")\n"
-      ],
-      "metadata": {
-        "colab": {
-          "base_uri": "https://localhost:8080/"
-        },
-        "id": "taGOBZWE-Frb",
-        "outputId": "e0a20324-934f-427a-c806-96ddc0ab9946"
-      },
-      "execution_count": null,
-      "outputs": [
-        {
-          "output_type": "stream",
-          "name": "stderr",
-          "text": [
-            "2025-05-29 16:55:31.982 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.\n",
-            "2025-05-29 16:55:31.984 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.\n",
-            "2025-05-29 16:55:31.986 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.\n",
-            "2025-05-29 16:55:31.987 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.\n",
-            "2025-05-29 16:55:31.989 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.\n",
-            "2025-05-29 16:55:31.990 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.\n",
-            "2025-05-29 16:55:31.992 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.\n",
-            "2025-05-29 16:55:31.993 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.\n",
-            "2025-05-29 16:55:31.996 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.\n",
-            "2025-05-29 16:55:31.997 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.\n"
-          ]
-        }
-      ]
-    }
-  ]
-}
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+
+# Simulando dados
+np.random.seed(42)
+n = 200
+data = pd.DataFrame({
+    'Tecnico': np.random.choice(['Ana', 'Bruno', 'Carla', 'Diego'], n),
+    'Produto': np.random.choice(['Produto A', 'Produto B', 'Produto C'], n),
+    'Data_Inspecao': pd.to_datetime('2025-01-01') + pd.to_timedelta(np.random.randint(0, 150, n), unit='D'),
+    'Status': np.random.choice(['OK', 'Pendente'], n, p=[0.75, 0.25]),
+    'Dias_Desde_Inspecao': np.random.randint(0, 200, n)
+})
+
+# --- Sidebar filtros ---
+st.sidebar.header("Filtros")
+tecnicos = st.sidebar.multiselect("Técnicos", options=data['Tecnico'].unique(), default=data['Tecnico'].unique())
+produtos = st.sidebar.multiselect("Produtos", options=data['Produto'].unique(), default=data['Produto'].unique())
+
+data_min = data['Data_Inspecao'].min()
+data_max = data['Data_Inspecao'].max()
+data_slider = st.sidebar.slider("Período da Inspeção", value=(data_min, data_max), min_value=data_min, max_value=data_max)
+
+status_filtro = st.sidebar.multiselect("Status", options=data['Status'].unique(), default=data['Status'].unique())
+
+# --- Filtragem ---
+df_filtrado = data[
+    (data['Tecnico'].isin(tecnicos)) &
+    (data['Produto'].isin(produtos)) &
+    (data['Status'].isin(status_filtro)) &
+    (data['Data_Inspecao'] >= pd.to_datetime(data_slider[0])) &
+    (data['Data_Inspecao'] <= pd.to_datetime(data_slider[1]))
+]
+
+# --- Cabeçalho ---
+st.title("📊 Dashboard de Inspeções Aprimorado")
+st.markdown(f"**Período selecionado:** {data_slider[0].date()} até {data_slider[1].date()}")
+
+# --- KPIs ---
+total_inspec = df_filtrado.shape[0]
+pct_ok = (df_filtrado['Status'] == 'OK').mean() * 100 if total_inspec > 0 else 0
+pendencias = (df_filtrado['Status'] == 'Pendente').sum()
+media_dias = df_filtrado['Dias_Desde_Inspecao'].mean() if total_inspec > 0 else 0
+
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Total Inspeções", total_inspec)
+col2.metric("Checklists OK (%)", f"{pct_ok:.1f}%")
+col3.metric("Pendências", pendencias)
+col4.metric("Média Dias Desde Inspeção", f"{media_dias:.1f}")
+
+# --- Gráficos ---
+with st.container():
+    col1, col2 = st.columns(2)
+
+    # Linha: inspeções por data
+    inspec_por_dia = df_filtrado.groupby('Data_Inspecao').size().reset_index(name='Qtd')
+    fig_linha = px.line(inspec_por_dia, x='Data_Inspecao', y='Qtd', title='Inspeções ao longo do tempo')
+    col1.plotly_chart(fig_linha, use_container_width=True)
+
+    # Pizza: Status geral
+    status_counts = df_filtrado['Status'].value_counts().reset_index()
+    status_counts.columns = ['Status', 'Qtd']
+    fig_pizza = px.pie(status_counts, values='Qtd', names='Status', title='Distribuição de Status', color='Status',
+                       color_discrete_map={'OK': 'green', 'Pendente': 'red'})
+    col2.plotly_chart(fig_pizza, use_container_width=True)
+
+# --- Alertas Dinâmicos ---
+st.subheader("🚨 Alertas Dinâmicos")
+
+criticos = df_filtrado[(df_filtrado['Status'] == 'Pendente') & (df_filtrado['Dias_Desde_Inspecao'] > 180)]
+moderados = df_filtrado[(df_filtrado['Status'] == 'Pendente') & (df_filtrado['Dias_Desde_Inspecao'].between(90, 180))]
+leves = df_filtrado[(df_filtrado['Status'] == 'Pendente') & (df_filtrado['Dias_Desde_Inspecao'] < 90)]
+
+col1, col2, col3 = st.columns(3)
+col1.metric("Pendências Críticas (>180 dias)", criticos.shape[0])
+col2.metric("Pendências Moderadas (90-180 dias)", moderados.shape[0])
+col3.metric("Pendências Recentes (<90 dias)", leves.shape[0])
+
+if criticos.shape[0] > 0:
+    with st.expander("Ver Pendências Críticas"):
+        st.dataframe(criticos)
+
+# --- Insights Textuais ---
+st.subheader("💡 Insights")
+if total_inspec == 0:
+    st.write("Nenhuma inspeção encontrada para os filtros selecionados. Tente ajustar os filtros.")
+else:
+    maior_pendencia = df_filtrado.groupby('Tecnico')['Status'].apply(lambda x: (x=='Pendente').sum()).idxmax()
+    qtd_maior_pendencia = df_filtrado.groupby('Tecnico')['Status'].apply(lambda x: (x=='Pendente').sum()).max()
+    st.markdown(f"- Técnico com mais pendências: **{maior_pendencia}** ({qtd_maior_pendencia} pendências)")
+    st.markdown(f"- Média de dias desde a última inspeção: **{media_dias:.1f} dias**")
+    if pct_ok < 80:
+        st.warning("Atenção! Percentual de checklists OK está abaixo de 80%.")
+    else:
+        st.success("Ótimo! Percentual de checklists OK está acima de 80%.")
+
+# --- Tabela detalhada ---
+st.subheader("📋 Detalhes das Inspeções")
+st.dataframe(df_filtrado.reset_index(drop=True), height=300)
