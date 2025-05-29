@@ -1,75 +1,101 @@
-# app.py - Pronto para rodar no Streamlit Cloud
-
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 
-st.set_page_config(page_title="Dashboard EPI", layout="wide")
+# Simulando dados
+np.random.seed(42)
+n = 200
+data = pd.DataFrame({
+    'Tecnico': np.random.choice(['Ana', 'Bruno', 'Carla', 'Diego'], n),
+    'Produto': np.random.choice(['Produto A', 'Produto B', 'Produto C'], n),
+    'Data_Inspecao': pd.to_datetime('2025-01-01') + pd.to_timedelta(np.random.randint(0, 150, n), unit='D'),
+    'Status': np.random.choice(['OK', 'Pendente'], n, p=[0.75, 0.25]),
+    'Dias_Desde_Inspecao': np.random.randint(0, 200, n)
+})
 
-st.title("🛡️ Relatório de EPI - Painel Interativo")
+# --- Sidebar filtros ---
+st.sidebar.header("Filtros")
+tecnicos = st.sidebar.multiselect("Técnicos", options=data['Tecnico'].unique(), default=data['Tecnico'].unique())
+produtos = st.sidebar.multiselect("Produtos", options=data['Produto'].unique(), default=data['Produto'].unique())
 
-# Upload de arquivo
-uploaded_file = st.file_uploader("📁 Envie seu arquivo CSV com os dados de EPI", type=["csv"])
+data_min = data['Data_Inspecao'].min()
+data_max = data['Data_Inspecao'].max()
+data_slider = st.sidebar.slider("Período da Inspeção", value=(data_min, data_max), min_value=data_min, max_value=data_max)
 
-if uploaded_file:
-    # Leitura e tratamento
-    df = pd.read_csv(uploaded_file)
-    df['DATA_INSPECAO'] = pd.to_datetime(df['DATA_INSPECAO'], errors='coerce')
+status_filtro = st.sidebar.multiselect("Status", options=data['Status'].unique(), default=data['Status'].unique())
 
-    st.subheader("📊 Dados Originais")
-    st.dataframe(df)
+# --- Filtragem ---
+df_filtrado = data[
+    (data['Tecnico'].isin(tecnicos)) &
+    (data['Produto'].isin(produtos)) &
+    (data['Status'].isin(status_filtro)) &
+    (data['Data_Inspecao'] >= pd.to_datetime(data_slider[0])) &
+    (data['Data_Inspecao'] <= pd.to_datetime(data_slider[1]))
+]
 
-    # Última inspeção por técnico e produto
-    df = df.sort_values(['TECNICO', 'PRODUTO_SIMILAR', 'DATA_INSPECAO'], ascending=[True, True, False])
-    df_unique = df.drop_duplicates(subset=['TECNICO', 'PRODUTO_SIMILAR'], keep='first')
+# --- Cabeçalho ---
+st.title("📊 Dashboard de Inspeções Aprimorado")
+st.markdown(f"**Período selecionado:** {data_slider[0].date()} até {data_slider[1].date()}")
 
-    # Define status: OK ou PENDENTE (>180 dias ou sem inspeção)
-    hoje = pd.Timestamp.today()
-    df_unique['STATUS'] = df_unique['DATA_INSPECAO'].apply(
-        lambda x: 'PENDENTE' if pd.isna(x) or (hoje - x).days > 180 else 'OK'
-    )
+# --- KPIs ---
+total_inspec = df_filtrado.shape[0]
+pct_ok = (df_filtrado['Status'] == 'OK').mean() * 100 if total_inspec > 0 else 0
+pendencias = (df_filtrado['Status'] == 'Pendente').sum()
+media_dias = df_filtrado['Dias_Desde_Inspecao'].mean() if total_inspec > 0 else 0
 
-    # 🎛️ Filtros
-    st.sidebar.header("🔎 Filtros")
-    gerente = st.sidebar.selectbox("Filtrar por Gerente", options=["Todos"] + sorted(df_unique['GERENTE_IMEDIATO'].dropna().unique()))
-    coordenador = st.sidebar.selectbox("Filtrar por Coordenador", options=["Todos"] + sorted(df_unique['COORDENADOR_IMEDIATO'].dropna().unique()))
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Total Inspeções", total_inspec)
+col2.metric("Checklists OK (%)", f"{pct_ok:.1f}%")
+col3.metric("Pendências", pendencias)
+col4.metric("Média Dias Desde Inspeção", f"{media_dias:.1f}")
 
-    if gerente != "Todos":
-        df_unique = df_unique[df_unique['GERENTE_IMEDIATO'] == gerente]
-    if coordenador != "Todos":
-        df_unique = df_unique[df_unique['COORDENADOR_IMEDIATO'] == coordenador]
+# --- Gráficos ---
+with st.container():
+    col1, col2 = st.columns(2)
 
-    # KPIs
-    total_registros = df_unique.shape[0]
-    total_ok = df_unique[df_unique['STATUS'] == 'OK'].shape[0]
-    total_pendente = total_registros - total_ok
-    pct_ok = (total_ok / total_registros * 100) if total_registros > 0 else 0
+    # Linha: inspeções por data
+    inspec_por_dia = df_filtrado.groupby('Data_Inspecao').size().reset_index(name='Qtd')
+    fig_linha = px.line(inspec_por_dia, x='Data_Inspecao', y='Qtd', title='Inspeções ao longo do tempo')
+    col1.plotly_chart(fig_linha, use_container_width=True)
 
-    st.subheader("✅ Visão Geral")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total de Registros", total_registros)
-    col2.metric("Com EPI OK", total_ok)
-    col3.metric("Pendentes", total_pendente)
+    # Pizza: Status geral
+    status_counts = df_filtrado['Status'].value_counts().reset_index()
+    status_counts.columns = ['Status', 'Qtd']
+    fig_pizza = px.pie(status_counts, values='Qtd', names='Status', title='Distribuição de Status', color='Status',
+                       color_discrete_map={'OK': 'green', 'Pendente': 'red'})
+    col2.plotly_chart(fig_pizza, use_container_width=True)
 
-    st.progress(pct_ok / 100)
+# --- Alertas Dinâmicos ---
+st.subheader("🚨 Alertas Dinâmicos")
 
-    # Gráfico de situação
-    status_count = df_unique['STATUS'].value_counts().reset_index()
-    fig_status = px.pie(status_count, names='index', values='STATUS', title='Distribuição de Situação EPI')
-    st.plotly_chart(fig_status, use_container_width=True)
+criticos = df_filtrado[(df_filtrado['Status'] == 'Pendente') & (df_filtrado['Dias_Desde_Inspecao'] > 180)]
+moderados = df_filtrado[(df_filtrado['Status'] == 'Pendente') & (df_filtrado['Dias_Desde_Inspecao'].between(90, 180))]
+leves = df_filtrado[(df_filtrado['Status'] == 'Pendente') & (df_filtrado['Dias_Desde_Inspecao'] < 90)]
 
-    # Ranking por coordenador
-    st.subheader("🏆 Registros por Coordenador")
-    coord_count = df_unique['COORDENADOR_IMEDIATO'].value_counts().reset_index()
-    coord_count.columns = ['COORDENADOR', 'QTD']
-    fig_coord = px.bar(coord_count, x='COORDENADOR', y='QTD', title='Quantidade por Coordenador')
-    st.plotly_chart(fig_coord, use_container_width=True)
+col1, col2, col3 = st.columns(3)
+col1.metric("Pendências Críticas (>180 dias)", criticos.shape[0])
+col2.metric("Pendências Moderadas (90-180 dias)", moderados.shape[0])
+col3.metric("Pendências Recentes (<90 dias)", leves.shape[0])
 
-    # Visualização dos dados finais
-    with st.expander("📋 Visualizar dados filtrados"):
-        st.dataframe(df_unique)
+if criticos.shape[0] > 0:
+    with st.expander("Ver Pendências Críticas"):
+        st.dataframe(criticos)
 
+# --- Insights Textuais ---
+st.subheader("💡 Insights")
+if total_inspec == 0:
+    st.write("Nenhuma inspeção encontrada para os filtros selecionados. Tente ajustar os filtros.")
 else:
-    st.info("👆 Envie um arquivo CSV para visualizar o painel.")
+    maior_pendencia = df_filtrado.groupby('Tecnico')['Status'].apply(lambda x: (x=='Pendente').sum()).idxmax()
+    qtd_maior_pendencia = df_filtrado.groupby('Tecnico')['Status'].apply(lambda x: (x=='Pendente').sum()).max()
+    st.markdown(f"- Técnico com mais pendências: **{maior_pendencia}** ({qtd_maior_pendencia} pendências)")
+    st.markdown(f"- Média de dias desde a última inspeção: **{media_dias:.1f} dias**")
+    if pct_ok < 80:
+        st.warning("Atenção! Percentual de checklists OK está abaixo de 80%.")
+    else:
+        st.success("Ótimo! Percentual de checklists OK está acima de 80%.")
 
-
+# --- Tabela detalhada ---
+st.subheader("📋 Detalhes das Inspeções")
+st.dataframe(df_filtrado.reset_index(drop=True), height=300)
