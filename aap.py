@@ -1,4 +1,4 @@
-pip install pyngrok
+
 pip install pandas plotly openpyxl
 
 # Cria um arquivo app.py com código básico (ajuste seu código aqui)
