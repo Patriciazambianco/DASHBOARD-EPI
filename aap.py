@@ -1,5 +1,3 @@
-# Instala Streamlit e ngrok
-pip install streamlit
 pip install pyngrok
 pip install pandas plotly openpyxl
 
