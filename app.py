@@ -4,11 +4,15 @@ import plotly.express as px
 
 # Simula o carregamento do dataframe (use o seu real aqui!)
 @st.cache_data
-def carregar_dados():
- df = pd.read_excel("LISTA DE VERIFICAÇÃO EPI.xlsx", engine="openpyxl")
+import pandas as pd
+import streamlit as st
 
+@st.cache_data
+def carregar_dados():
+    df = pd.read_excel("lista_verificacao_epi.xlsx", engine="openpyxl")
     df['Data_Inspecao'] = pd.to_datetime(df['Data_Inspecao'])
     return df
+
 
 def show():
     st.title("📊 Dashboard de Inspeções por Gerência")
