@@ -1,6 +1,3 @@
-
-pip install pandas plotly openpyxl
-
 # Cria um arquivo app.py com código básico (ajuste seu código aqui)
 code = """
 import streamlit as st
