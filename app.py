@@ -5,7 +5,7 @@ import plotly.express as px
 # Simula o carregamento do dataframe (use o seu real aqui!)
 @st.cache_data
 def carregar_dados():
-   df = pd.read_excel("CHECK LIST EPI").xlsx", engine="openpyxl")
+ df = pd.read_excel("CHECK LIST EPI.xlsx", engine="openpyxl")
 
     df['Data_Inspecao'] = pd.to_datetime(df['Data_Inspecao'])
     return df
