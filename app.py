@@ -48,10 +48,6 @@ def show():
     st.subheader("Inspeções por Produto")
     fig = px.histogram(df_filtrado, x="Produto", color="Status", barmode="group")
 
-    if __name__ == "__main__":  show()
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    # Tabela detalhada
-    st.subheader("📋 Dados detalhados")
-    st.dataframe(df_filtrado.reset_index(drop=True), height=400)
+   if __name__ == "__main__":
+    print("Rodando o dashboard...")  # Debug print
+    show()
