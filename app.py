@@ -19,8 +19,9 @@ st.sidebar.header("Filtros")
 tecnicos = st.sidebar.multiselect("Técnicos", options=data['Tecnico'].unique(), default=data['Tecnico'].unique())
 produtos = st.sidebar.multiselect("Produtos", options=data['Produto'].unique(), default=data['Produto'].unique())
 
-data_min = data['Data_Inspecao'].min()
-data_max = data['Data_Inspecao'].max()
+# ✅ Corrigido: transformar para datetime.date
+data_min = data['Data_Inspecao'].min().date()
+data_max = data['Data_Inspecao'].max().date()
 data_slider = st.sidebar.slider("Período da Inspeção", value=(data_min, data_max), min_value=data_min, max_value=data_max)
 
 status_filtro = st.sidebar.multiselect("Status", options=data['Status'].unique(), default=data['Status'].unique())
@@ -36,7 +37,7 @@ df_filtrado = data[
 
 # --- Cabeçalho ---
 st.title("📊 Dashboard de Inspeções Aprimorado")
-st.markdown(f"**Período selecionado:** {data_slider[0].date()} até {data_slider[1].date()}")
+st.markdown(f"**Período selecionado:** {data_slider[0]} até {data_slider[1]}")
 
 # --- KPIs ---
 total_inspec = df_filtrado.shape[0]
@@ -92,9 +93,9 @@ else:
     st.markdown(f"- Técnico com mais pendências: **{maior_pendencia}** ({qtd_maior_pendencia} pendências)")
     st.markdown(f"- Média de dias desde a última inspeção: **{media_dias:.1f} dias**")
     if pct_ok < 80:
-        st.warning("Atenção! Percentual de checklists OK está abaixo de 80%.")
+        st.warning("⚠️ Atenção: Percentual de checklists OK está abaixo de 80%.")
     else:
-        st.success("Ótimo! Percentual de checklists OK está acima de 80%.")
+        st.success("✅ Tudo certo! Percentual de checklists OK está acima de 80%.")
 
 # --- Tabela detalhada ---
 st.subheader("📋 Detalhes das Inspeções")
