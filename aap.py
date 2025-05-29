@@ -7,7 +7,6 @@ import plotly.express as px
 def carregar_dados():
 df = pd.read_excel("LISTA DE VERIFICAÇÃO EPI.xlsx", engine="openpyxl")
 
-
     df['Data_Inspecao'] = pd.to_datetime(df['Data_Inspecao'])
     return df
 
