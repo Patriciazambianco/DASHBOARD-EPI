@@ -1,21 +1,4 @@
-# app.py - só isso basta pra rodar no Streamlit Cloud
-
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-
-st.title('Dashboard EPI - Upload e gráficos')
-
-uploaded_file = st.file_uploader("📁 Envie seu arquivo Excel", type=["xlsx"])
-if uploaded_file:
-    df = pd.read_excel(uploaded_file, engine='openpyxl')
-    st.write(df.head())
-
-    # Exemplo de gráfico
-    fig = px.bar(df, x=df.columns[0], y=df.columns[1])
-    st.plotly_chart(fig)
-else:
-    st.write("Envie um arquivo para começar.")
+# app.py - Pronto para rodar no Streamlit Cloud
 
 import streamlit as st
 import pandas as pd
@@ -25,9 +8,11 @@ st.set_page_config(page_title="Dashboard EPI", layout="wide")
 
 st.title("🛡️ Relatório de EPI - Painel Interativo")
 
+# Upload de arquivo
 uploaded_file = st.file_uploader("📁 Envie seu arquivo CSV com os dados de EPI", type=["csv"])
 
 if uploaded_file:
+    # Leitura e tratamento
     df = pd.read_csv(uploaded_file)
     df['DATA_INSPECAO'] = pd.to_datetime(df['DATA_INSPECAO'], errors='coerce')
 
@@ -38,13 +23,13 @@ if uploaded_file:
     df = df.sort_values(['TECNICO', 'PRODUTO_SIMILAR', 'DATA_INSPECAO'], ascending=[True, True, False])
     df_unique = df.drop_duplicates(subset=['TECNICO', 'PRODUTO_SIMILAR'], keep='first')
 
-    # Define se está pendente (sem data ou >180 dias)
+    # Define status: OK ou PENDENTE (>180 dias ou sem inspeção)
     hoje = pd.Timestamp.today()
     df_unique['STATUS'] = df_unique['DATA_INSPECAO'].apply(
         lambda x: 'PENDENTE' if pd.isna(x) or (hoje - x).days > 180 else 'OK'
     )
 
-    # Filtros (sidebar pra liberar espaço!)
+    # 🎛️ Filtros
     st.sidebar.header("🔎 Filtros")
     gerente = st.sidebar.selectbox("Filtrar por Gerente", options=["Todos"] + sorted(df_unique['GERENTE_IMEDIATO'].dropna().unique()))
     coordenador = st.sidebar.selectbox("Filtrar por Coordenador", options=["Todos"] + sorted(df_unique['COORDENADOR_IMEDIATO'].dropna().unique()))
@@ -80,10 +65,11 @@ if uploaded_file:
     fig_coord = px.bar(coord_count, x='COORDENADOR', y='QTD', title='Quantidade por Coordenador')
     st.plotly_chart(fig_coord, use_container_width=True)
 
-    # Mostrar dados finais
+    # Visualização dos dados finais
     with st.expander("📋 Visualizar dados filtrados"):
         st.dataframe(df_unique)
 
 else:
     st.info("👆 Envie um arquivo CSV para visualizar o painel.")
+
 
