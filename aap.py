@@ -1,5 +1,5 @@
-# Cria um arquivo app.py com código básico (ajuste seu código aqui)
-code = """
+# app.py - só isso basta pra rodar no Streamlit Cloud
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -16,25 +16,3 @@ if uploaded_file:
     st.plotly_chart(fig)
 else:
     st.write("Envie um arquivo para começar.")
-"""
-
-with open("app.py", "w") as f:
-    f.write(code)
-
-# Importa ngrok e streamlit
-from pyngrok import ngrok
-import threading
-import os
-
-# Função para rodar o Streamlit
-def run_streamlit():
-    os.system('streamlit run app.py')
-
-# Libera a porta 8501 para o túnel ngrok
-public_url = ngrok.connect(port=8501)
-print(f"Streamlit será exposto no link: {public_url}")
-
-# Roda o Streamlit em background numa thread
-threading.Thread(target=run_streamlit).start()
-
-
