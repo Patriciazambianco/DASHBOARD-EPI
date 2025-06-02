@@ -10,21 +10,18 @@ def carregar_dados():
     df = pd.read_excel("LISTA DE VERIFICAÇÃO EPI.xlsx", engine="openpyxl")
     df.columns = df.columns.str.strip()
 
-    st.write("🕵️‍♀️ Colunas encontradas no arquivo:", df.columns.tolist())
-
     col_tec = [col for col in df.columns if 'TECNICO' in col.upper()]
     col_prod = [col for col in df.columns if 'PRODUTO' in col.upper()]
     col_data = [col for col in df.columns if 'INSPECAO' in col.upper()]
 
     if not col_tec or not col_prod or not col_data:
         st.error("❌ Verifique se o arquivo contém colunas de TÉCNICO, PRODUTO e INSPEÇÃO.")
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame()
 
     tecnico_col = col_tec[0]
     produto_col = col_prod[0]
     data_col = col_data[0]
 
-    # Renomear colunas para padrão
     df.rename(columns={
         'GERENTE': 'GERENTE_IMEDIATO',
         'SITUAÇÃO CHECK LIST': 'Status_Final'
@@ -34,7 +31,7 @@ def carregar_dados():
 
     base = df[[tecnico_col, produto_col]].drop_duplicates()
 
-    # Linhas com inspeção feita (última inspeção)
+    # Linhas com inspeção (última inspeção por técnico+produto)
     ultimas = (
         df.dropna(subset=['Data_Inspecao'])
         .sort_values('Data_Inspecao')
@@ -42,48 +39,38 @@ def carregar_dados():
         .last()
     )
 
-    # Linhas sem nenhuma inspeção (com data de inspeção vazia)
-    nunca = (
-        df[df['Data_Inspecao'].isna()]
-        .drop_duplicates(subset=[tecnico_col, produto_col])
-    )
-
-    # Mescla para ter o conjunto completo para últimos dados
     final = pd.merge(base, ultimas, on=[tecnico_col, produto_col], how='left')
 
-    # Ajustar nomes
     final.rename(columns={
         tecnico_col: 'TECNICO',
         produto_col: 'PRODUTO'
     }, inplace=True)
 
-    nunca.rename(columns={
-        tecnico_col: 'TECNICO',
-        produto_col: 'PRODUTO'
-    }, inplace=True)
-
-    # Ajustar colunas de status
-    final['Status_Final'] = final['Status_Final'].str.upper()
-    nunca['Status_Final'] = nunca['Status_Final'].str.upper()
+    final['Status_Final'] = final['Status_Final'].astype(str).str.upper()
 
     hoje = pd.Timestamp.now().normalize()
     final['Dias_Sem_Inspecao'] = (hoje - final['Data_Inspecao']).dt.days
     final['Vencido'] = final['Dias_Sem_Inspecao'] > 180
+
+    # Técnicos que NUNCA tiveram inspeção (Data_Inspecao é NaT)
+    nunca = final[final['Data_Inspecao'].isna()].copy()
 
     return final, nunca
 
 def exportar_excel(df):
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Pendentes')
+        df.to_excel(writer, index=False, sheet_name='Dados')
+        writer.save()
     return buffer.getvalue()
 
 def plot_pie_chart(df, group_col, title_prefix):
     grouped = df.groupby(group_col)['Status_Final'].value_counts().unstack(fill_value=0)
-    # Verificar se tem colunas OK e PENDENTE, para evitar erro
-    cols_esperadas = ['OK', 'PENDENTE']
-    cols_existentes = [c for c in cols_esperadas if c in grouped.columns]
-    grouped = grouped[cols_existentes] if cols_existentes else grouped
+    # Garantir que colunas OK e PENDENTE existam
+    for status in ['OK', 'PENDENTE']:
+        if status not in grouped.columns:
+            grouped[status] = 0
+    grouped = grouped[['OK', 'PENDENTE']]
 
     charts = []
     for grupo in grouped.index:
@@ -122,6 +109,7 @@ def show():
 
     final, nunca = carregar_dados()
     if final.empty and nunca.empty:
+        st.warning("Nenhum dado disponível para exibir.")
         return
 
     gerentes = sorted(final['GERENTE_IMEDIATO'].dropna().unique())
@@ -145,10 +133,19 @@ def show():
         final_filtrado = final_filtrado[final_filtrado['Vencido']]
 
     df_pendentes = final_filtrado[final_filtrado['Status_Final'] == 'PENDENTE']
+
+    # Botões de download
     st.download_button(
         label="📥 Baixar Pendentes (.xlsx)",
         data=exportar_excel(df_pendentes),
         file_name="pendentes_epi.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+    st.download_button(
+        label="📥 Baixar Técnicos Nunca Inspecionados (.xlsx)",
+        data=exportar_excel(nunca_filtrado),
+        file_name="tecnicos_nunca_inspecionados.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
@@ -162,15 +159,11 @@ def show():
     pct_tecnicos_nao_inspecionaram = 100 - pct_tecnicos_inspecionaram
 
     col1, col2, col3, col4 = st.columns(4)
+
     color_metric("% OK", pct_ok, "#2a9d8f")
-    with col1:
-        color_metric("% OK", pct_ok, "#2a9d8f")
-    with col2:
-        color_metric("% Pendentes", pct_pendentes, "#e76f51")
-    with col3:
-        color_metric("% Técnicos com Inspeção", pct_tecnicos_inspecionaram, "#f4a261")
-    with col4:
-        color_metric("% Técnicos sem Inspeção", pct_tecnicos_nao_inspecionaram, "#e76f51")
+    color_metric("% Pendentes", pct_pendentes, "#e76f51")
+    color_metric("% Técnicos com Inspeção", pct_tecnicos_inspecionaram, "#f4a261")
+    color_metric("% Técnicos sem Inspeção", pct_tecnicos_nao_inspecionaram, "#e76f51")
 
     st.markdown("---")
 
@@ -192,14 +185,13 @@ def show():
 
     st.markdown("---")
 
-    st.subheader("📋 Técnicos com Última Inspeção")
+    st.subheader("📋 Dados detalhados - Inspeções")
     st.dataframe(final_filtrado.reset_index(drop=True), height=400)
 
     st.markdown("---")
 
-    st.subheader("📋 Técnicos que Nunca Foram Inspecionados")
-    st.dataframe(nunca_filtrado[['TECNICO', 'PRODUTO', 'GERENTE_IMEDIATO', 'Status_Final']].reset_index(drop=True), height=300)
-
+    st.subheader("📋 Técnicos Nunca Inspecionados")
+    st.dataframe(nunca_filtrado.reset_index(drop=True), height=300)
 
 if __name__ == "__main__":
     show()
