@@ -5,7 +5,7 @@ from io import BytesIO
 # Função para carregar dados com cache
 @st.cache_data
 def carregar_dados():
-    df = pd.read_excel("seus_dados.xlsx")
+    df = pd.read_excel("LISTA DE VERIFICAÇÃO EPI.xlsx")
     return df
 
 # Dicionário de normalização dos produtos
