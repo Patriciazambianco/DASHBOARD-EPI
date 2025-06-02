@@ -1,85 +1,82 @@
 import streamlit as st
 import pandas as pd
-import io
+from io import BytesIO
 
+# Função para carregar dados com cache
+@st.cache_data
+def carregar_dados():
+    df = pd.read_excel("seus_dados.xlsx")
+    return df
+
+# Dicionário de normalização dos produtos
+normalizar_produto = {
+    'CONE DE SINALIZACAO': 'CONE',
+    'DETECTOR DE TENSAO': 'DETECTOR DE TENSAO',
+    'LUVA DE BORRACHA': 'LUVA CLASSE 0',
+    'LUVA SEGURANCA PROTECAO ELETRICA': 'LUVA CLASSE 0',
+    'LUVA DE COBERTURA': 'LUVA COBERTURA',
+    'OCULOS DE PROTECAO': 'OCULOS',
+    'OCULOS DE SEGURANCA': 'OCULOS',
+    'OCULOS DE PROTECAO TIPO RJ': 'OCULOS',
+    'LUVA PROTECAO VAQUETA': 'LUVA VAQUETA',
+    'CINTO SEGURANCA TIPO PARAQUEDISTA': 'CINTO PARAQUEDISTA',
+    'CINTO SEGURANCA TIPO PARAQUEDISTA/ALPINISTA': 'CINTO PARAQUEDISTA',
+    'TALABARTE': 'TALABARTE',
+    'KIT PARA LINHA DE VIDA': 'KIT RESGATE'
+}
+
+def padronizar_categoria_produto(produto):
+    for chave in normalizar_produto:
+        if chave in produto:
+            return normalizar_produto[chave]
+    return produto
+
+# Função para exportar como Excel
 def exportar_excel(df):
-    output = io.BytesIO()
+    output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Dados')
-    return output.getvalue()
+        df.to_excel(writer, index=False, sheet_name='Pendencias')
+    output.seek(0)
+    return output
 
 def show():
-    st.title("Dashboard Inspeções EPI - Limpeza e Filtragem Profissa")
+    st.title("📋 Dashboard de Inspeções de EPI")
 
-    uploaded_file = st.file_uploader("Envie seu arquivo Excel com os dados", type=['xlsx'])
-    if uploaded_file is None:
-        st.info("Por favor, faça upload do arquivo para continuar.")
-        return
+    df = carregar_dados()
+    df['PRODUTO_SIMILAR'] = df['PRODUTO_SIMILAR'].astype(str).str.upper()
+    df['CATEGORIA_PRODUTO'] = df['PRODUTO_SIMILAR'].apply(padronizar_categoria_produto)
 
-    # Leitura do arquivo
-    df = pd.read_excel(uploaded_file)
+    # Última inspeção por técnico + categoria
+    df_inspecao = df.dropna(subset=['DATA_INSPECAO'])
+    ultimas = df_inspecao.sort_values('DATA_INSPECAO').drop_duplicates(subset=['IDTEL_TECNICO', 'CATEGORIA_PRODUTO'], keep='last')
 
-    # Limpeza geral dos dados para evitar duplicações bobas
-    cols_string = ['IDTEL_TECNICO', 'PRODUTO_SIMILAR', 'TÉCNICO', 'COORDENADOR', 'GERENTE']
-    for col in cols_string:
-        if col in df.columns:
-            df[col] = df[col].astype(str).str.strip().str.upper()
+    # Todas as combinações possíveis Técnico + Categoria
+    todos = df[['IDTEL_TECNICO', 'TÉCNICO', 'CATEGORIA_PRODUTO', 'COORDENADOR']].drop_duplicates()
 
-    # Converter datas, erros vira NaT
-    df['DATA_INSPECAO'] = pd.to_datetime(df['DATA_INSPECAO'], errors='coerce')
+    # Técnicos que NUNCA foram inspecionados para determinada categoria
+    pendentes = todos.merge(ultimas[['IDTEL_TECNICO', 'CATEGORIA_PRODUTO']],
+                            on=['IDTEL_TECNICO', 'CATEGORIA_PRODUTO'], how='left', indicator=True)
+    pendentes = pendentes[pendentes['_merge'] == 'left_only'].drop(columns=['_merge'])
 
-    # Debug: mostrar linhas totais
-    st.write(f"Linhas totais no arquivo: {len(df)}")
+    st.subheader("📌 Técnicos com EPIs Ainda Não Inspecionados")
+    st.dataframe(pendentes, use_container_width=True)
 
-    # Pegar a última inspeção por Técnico + Produto
-    inspecionados = (
-        df.dropna(subset=['DATA_INSPECAO'])  # só quem tem data
-          .sort_values('DATA_INSPECAO', ascending=False)
-          .drop_duplicates(subset=['IDTEL_TECNICO', 'PRODUTO_SIMILAR'])
-          .reset_index(drop=True)
-    )
-    st.write(f"Técnicos + Produtos com inspeção: {len(inspecionados)}")
-
-    # Lista única de Técnico + Produto (com info de gerente/coordenador)
-    tecnicos_produtos = (
-        df[['IDTEL_TECNICO', 'TÉCNICO', 'PRODUTO_SIMILAR', 'COORDENADOR', 'GERENTE']]
-        .drop_duplicates()
-        .reset_index(drop=True)
-    )
-    st.write(f"Técnicos + Produtos totais (sem filtro): {len(tecnicos_produtos)}")
-
-    # Merge para encontrar quem nunca inspecionou (join anti)
-    nunca_inspecionados = tecnicos_produtos.merge(
-        inspecionados[['IDTEL_TECNICO', 'PRODUTO_SIMILAR']],
-        on=['IDTEL_TECNICO', 'PRODUTO_SIMILAR'],
-        how='left',
-        indicator=True
-    )
-    nunca_inspecionados = nunca_inspecionados[
-        nunca_inspecionados['_merge'] == 'left_only'
-    ].drop(columns=['_merge']).reset_index(drop=True)
-    st.write(f"Técnicos + Produtos que nunca tiveram inspeção: {len(nunca_inspecionados)}")
-
-    # Mostrar tabelas para conferência
-    st.header("Última inspeção por Técnico e Produto")
-    st.dataframe(inspecionados)
-
-    st.header("Técnicos e Produtos sem nenhuma inspeção")
-    st.dataframe(nunca_inspecionados)
-
-    # Botões para exportar arquivos Excel
     st.download_button(
-        "Exportar Inspecionados",
-        data=exportar_excel(inspecionados),
-        file_name="inspecionados.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-    st.download_button(
-        "Exportar Nunca Inspecionados",
-        data=exportar_excel(nunca_inspecionados),
-        file_name="nunca_inspecionados.xlsx",
+        label="⬇️ Baixar Pendentes em Excel",
+        data=exportar_excel(pendentes),
+        file_name="pendencias_epi.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-if __name__ == "__main__":
+    st.subheader("✅ Últimas Inspeções por Técnico + EPI")
+    st.dataframe(ultimas[['IDTEL_TECNICO', 'TÉCNICO', 'CATEGORIA_PRODUTO', 'DATA_INSPECAO']], use_container_width=True)
+
+    st.download_button(
+        label="⬇️ Baixar Inspecionados em Excel",
+        data=exportar_excel(ultimas),
+        file_name="inspecionados_epi.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+if __name__ == '__main__':
     show()
