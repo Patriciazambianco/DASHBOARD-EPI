@@ -8,6 +8,14 @@ def carregar_dados(uploaded_file):
     df = pd.read_excel(uploaded_file)
     df['DATA_INSPECAO'] = pd.to_datetime(df['DATA_INSPECAO'], errors='coerce')
     df.loc[df['DATA_INSPECAO'] == pd.Timestamp('2001-01-01'), 'DATA_INSPECAO'] = pd.NaT
+    
+    # Padroniza strings pra evitar duplicados “escondidos”
+    df['IDTEL_TECNICO'] = df['IDTEL_TECNICO'].astype(str).str.strip()
+    df['PRODUTO_SIMILAR'] = df['PRODUTO_SIMILAR'].astype(str).str.strip().str.upper()
+    
+    # Remove duplicados exatos com base nas colunas essenciais
+    df = df.drop_duplicates(subset=['IDTEL_TECNICO', 'PRODUTO_SIMILAR', 'DATA_INSPECAO'])
+    
     return df
 
 def gerar_ultima_inspecao(df):
@@ -50,6 +58,9 @@ if uploaded_file:
         df_filtrado = df_filtrado[df_filtrado['GERENTE'] == gerente_selecionado]
     if coordenador_selecionado != 'Todos':
         df_filtrado = df_filtrado[df_filtrado['COORDENADOR'] == coordenador_selecionado]
+
+    # Remove duplicados exatos no filtro também para garantir
+    df_filtrado = df_filtrado.drop_duplicates(subset=['IDTEL_TECNICO', 'PRODUTO_SIMILAR', 'DATA_INSPECAO'])
 
     ultimas = gerar_ultima_inspecao(df_filtrado)
     nunca = gerar_nunca_inspecionados(df_filtrado)
