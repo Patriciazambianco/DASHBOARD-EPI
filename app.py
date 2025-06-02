@@ -114,7 +114,7 @@ def show():
 
     ultimas_f = ultimas_f[ultimas_f['COORDENADOR'].isin(coord_sel)]
     pendentes_f = pendentes_f[pendentes_f['COORDENADOR'].isin(coord_sel)]
-    nunca_f = nunca_f[never_f['COORDENADOR'].isin(coord_sel)]
+    nunca_f = nunca_f[nunca_f['COORDENADOR'].isin(coord_sel)]
 
     # Mostrar só vencidos > 180 dias?
     so_vencidos = st.sidebar.checkbox("🔴 Mostrar apenas vencidos > 180 dias")
