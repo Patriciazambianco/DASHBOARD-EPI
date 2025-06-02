@@ -1,126 +1,159 @@
 import streamlit as st
 import pandas as pd
-import io
+import plotly.express as px
+from io import BytesIO
+
+st.set_page_config(page_title="Dashboard de EPI", layout="wide")
 
 @st.cache_data
 def carregar_dados():
     df = pd.read_excel("LISTA DE VERIFICAÇÃO EPI.xlsx", engine="openpyxl")
     df.columns = df.columns.str.strip()
 
-    # Ajuste colunas (adapte se precisar)
-    tecnico_col = [c for c in df.columns if 'TECNICO' in c.upper()][0]
-    produto_col = [c for c in df.columns if 'PRODUTO' in c.upper()][0]
-    data_col = [c for c in df.columns if 'INSPECAO' in c.upper()][0]
+    col_tec = [col for col in df.columns if 'TECNICO' in col.upper()]
+    col_prod = [col for col in df.columns if 'PRODUTO' in col.upper()]
+    col_data = [col for col in df.columns if 'INSPECAO' in col.upper()]
 
-    # Renomeia para padronizar
-    df.rename(columns={'GERENTE': 'GERENTE_IMEDIATO', 'SITUAÇÃO CHECK LIST': 'Status_Final'}, inplace=True)
+    if not col_tec or not col_prod or not col_data:
+        st.error("❌ Verifique se o arquivo contém colunas de TÉCNICO, PRODUTO e INSPEÇÃO.")
+        return pd.DataFrame(), pd.DataFrame()
+
+    tecnico_col = col_tec[0]
+    produto_col = col_prod[0]
+    data_col = col_data[0]
+
+    df.rename(columns={
+        'GERENTE': 'GERENTE_IMEDIATO',
+        'SITUAÇÃO CHECK LIST': 'Status_Final'
+    }, inplace=True)
+
     df['Data_Inspecao'] = pd.to_datetime(df[data_col], errors='coerce')
 
-    # Base única técnico+produto
+    # Base técnica-produto única
     base = df[[tecnico_col, produto_col]].drop_duplicates()
 
-    # Quem já teve inspeção
-    com_inspecao = df.dropna(subset=['Data_Inspecao'])[[tecnico_col, produto_col]].drop_duplicates()
-
-    # Nunca inspecionados = base menos os que já tiveram inspeção
-    nunca = pd.merge(base, com_inspecao, on=[tecnico_col, produto_col], how='left', indicator=True)
-    nunca = nunca[nunca['_merge'] == 'left_only'].drop(columns=['_merge'])
-
-    # Última inspeção de cada técnico+produto
+    # Inspeções feitas: pegar última inspeção por técnico-produto
     ultimas = (
         df.dropna(subset=['Data_Inspecao'])
-        .sort_values('Data_Inspecao')
-        .groupby([tecnico_col, produto_col], as_index=False)
-        .last()
+          .sort_values('Data_Inspecao')
+          .groupby([tecnico_col, produto_col], as_index=False)
+          .last()
     )
 
-    # Tabela final junta base com últimas inspeções (ou sem inspeção = NaN)
-    final = pd.merge(base, ultimas, on=[tecnico_col, produto_col], how='left')
+    # Pendentes = base menos os que já têm inspeção
+    pendentes = base.merge(
+        ultimas[[tecnico_col, produto_col]],
+        on=[tecnico_col, produto_col],
+        how='left',
+        indicator=True
+    )
+    pendentes = pendentes[pendentes['_merge'] == 'left_only'].drop(columns=['_merge'])
 
-    # Padroniza nomes colunas para usar em filtros e exibição
-    final.rename(columns={tecnico_col: 'TECNICO', produto_col: 'PRODUTO'}, inplace=True)
-    nunca.rename(columns={tecnico_col: 'TECNICO', produto_col: 'PRODUTO'}, inplace=True)
+    # Criar df pendentes completo com dados do df original (para exibir e exportar)
+    pendentes = pendentes.merge(df, on=[tecnico_col, produto_col], how='left')
 
-    return final, nunca
+    # Técnicos que nunca inspecionaram NENHUM produto
+    tecnicos_com_inspecao = ultimas[tecnico_col].unique()
+    tecnicos_base = df[tecnico_col].unique()
+    tecnicos_nunca = [tec for tec in tecnicos_base if tec not in tecnicos_com_inspecao]
+    nunca_inspecionados = df[df[tecnico_col].isin(tecnicos_nunca)].drop_duplicates(subset=[tecnico_col, produto_col])
+
+    # Renomear colunas pra padronizar depois
+    ultimas.rename(columns={tecnico_col: 'TECNICO', produto_col: 'PRODUTO'}, inplace=True)
+    pendentes.rename(columns={tecnico_col: 'TECNICO', produto_col: 'PRODUTO'}, inplace=True)
+    nunca_inspecionados.rename(columns={tecnico_col: 'TECNICO', produto_col: 'PRODUTO'}, inplace=True)
+
+    ultimas['Status_Final'] = ultimas['Status_Final'].str.upper()
+    pendentes['Status_Final'] = pendentes['Status_Final'].str.upper()
+    nunca_inspecionados['Status_Final'] = nunca_inspecionados['Status_Final'].str.upper()
+
+    # Calcular colunas extras para ultimas inspeções
+    hoje = pd.Timestamp.now().normalize()
+    ultimas['Dias_Sem_Inspecao'] = (hoje - ultimas['Data_Inspecao']).dt.days
+    ultimas['Vencido'] = ultimas['Dias_Sem_Inspecao'] > 180
+
+    return ultimas, pendentes, nunca_inspecionados
 
 def exportar_excel(df):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Dados')
         writer.save()
-    processed_data = output.getvalue()
-    return processed_data
+    return buffer.getvalue()
 
-def badge_status(status):
-    if status == "OK":
-        return f"<span style='color: white; background-color: green; padding: 3px 8px; border-radius: 5px;'>OK</span>"
-    elif status == "Pendente":
-        return f"<span style='color: white; background-color: red; padding: 3px 8px; border-radius: 5px;'>Pendente</span>"
+def color_status_badge(status):
+    if status == "PENDENTE":
+        return "🔴 PENDENTE"
+    elif status == "OK":
+        return "🟢 OK"
     else:
-        return f"<span style='color: black; background-color: gray; padding: 3px 8px; border-radius: 5px;'>{status}</span>"
+        return status
 
 def show():
-    st.title("Dashboard de Inspeções EPI")
+    st.title("📊 Dashboard de Inspeções EPI")
 
-    # Carregar dados
-    df_pendentes, df_nunca = carregar_dados()
+    ultimas, pendentes, nunca_inspecionados = carregar_dados()
+    if ultimas.empty and pendentes.empty and nunca_inspecionados.empty:
+        return
 
-    # Seleção filtros (adapte colunas para seu dataset)
-    gerentes = ['Todos'] + sorted(df_pendentes['GERENTE_IMEDIATO'].dropna().unique().tolist())
-    gerente_sel = st.selectbox("Selecione Gerente", gerentes)
+    # Filtros simples por gerente e coordenador (opcional)
+    gerentes = sorted(ultimas['GERENTE_IMEDIATO'].dropna().unique())
+    gerente_sel = st.sidebar.selectbox("👨‍💼 Selecione o Gerente", ["Todos"] + gerentes)
 
-    coord_col = 'COORDENADOR' if 'COORDENADOR' in df_pendentes.columns else None
-    if coord_col:
-        coordenadores = ['Todos'] + sorted(df_pendentes[coord_col].dropna().unique().tolist())
-        coord_sel = st.multiselect("Selecione Coordenador(s)", coordenadores, default=['Todos'])
+    if gerente_sel != "Todos":
+        ultimas_f = ultimas[ultimas['GERENTE_IMEDIATO'] == gerente_sel]
+        pendentes_f = pendentes[pendentes['GERENTE_IMEDIATO'] == gerente_sel]
+        nunca_f = nunca_inspecionados[never_inspecionados['GERENTE_IMEDIATO'] == gerente_sel]
     else:
-        coord_sel = ['Todos']
+        ultimas_f = ultimas.copy()
+        pendentes_f = pendentes.copy()
+        nunca_f = nunca_inspecionados.copy()
 
-    # Filtra pendentes (exemplo filtro simples, adapte conforme necessidade)
-    pendentes = df_pendentes.copy()
-    if gerente_sel != 'Todos':
-        pendentes = pendentes[pendentes['GERENTE_IMEDIATO'] == gerente_sel]
+    coordenadores = sorted(ultimas_f['COORDENADOR'].dropna().unique())
+    coord_sel = st.sidebar.multiselect("👩‍💼 Coordenador", options=coordenadores, default=coordenadores)
 
-    if coord_col and 'Todos' not in coord_sel:
-        pendentes = pendentes[pendentes[coord_col].isin(coord_sel)]
+    ultimas_f = ultimas_f[ultimas_f['COORDENADOR'].isin(coord_sel)]
+    pendentes_f = pendentes_f[pendentes_f['COORDENADOR'].isin(coord_sel)]
+    nunca_f = nunca_f[never_f['COORDENADOR'].isin(coord_sel)]
 
-    # Filtra técnicos nunca inspecionados - só filtra se colunas existirem
-    nunca_filtrado = df_nunca.copy()
-    if 'GERENTE_IMEDIATO' in nunca_filtrado.columns and gerente_sel != 'Todos':
-        nunca_filtrado = nunca_filtrado[nenhuma['GERENTE_IMEDIATO'] == gerente_sel]
+    # Mostrar só vencidos > 180 dias?
+    so_vencidos = st.sidebar.checkbox("🔴 Mostrar apenas vencidos > 180 dias")
+    if so_vencidos:
+        ultimas_f = ultimas_f[ultimas_f['Vencido'] == True]
 
-    if coord_col and 'Todos' not in coord_sel and coord_col in nunca_filtrado.columns:
-        nunca_filtrado = nunca_filtrado[nenhuma[coord_col].isin(coord_sel)]
+    # Criar badges coloridos
+    ultimas_f['Status_Colorido'] = ultimas_f['Status_Final'].apply(color_status_badge)
+    pendentes_f['Status_Colorido'] = pendentes_f['Status_Final'].apply(color_status_badge)
+    nunca_f['Status_Colorido'] = nunca_f['Status_Final'].apply(color_status_badge)
 
-    st.subheader("Técnicos Pendentes de Inspeção")
-    st.write(f"Quantidade: {len(pendentes)}")
-    if not pendentes.empty:
-        # Exemplo badge na coluna Status_Final
-        pendentes['Status_Color'] = pendentes['Status_Final'].fillna('Pendente').apply(badge_status)
-        st.write(pendentes.style.format({'Status_Color': lambda x: x}).hide_columns([]), unsafe_allow_html=True)
+    st.subheader("✅ Últimas Inspeções Realizadas")
+    st.dataframe(ultimas_f)
 
-        btn_pendentes = st.download_button(
-            label="Exportar Pendentes para Excel",
-            data=exportar_excel(pendentes),
-            file_name="pendentes_inspecao.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    else:
-        st.info("Nenhum técnico pendente encontrado.")
+    st.subheader("⚠️ Técnicos e Produtos PENDENTES (Nunca Inspecionados)")
+    st.dataframe(pendentes_f)
 
-    st.subheader("Técnicos Nunca Inspecionados")
-    st.write(f"Quantidade: {len(nunca_filtrado)}")
-    if not nunca_filtrado.empty:
-        st.write(nunca_filtrado)
+    st.subheader("❌ Técnicos que Nunca Realizaram Inspeção")
+    st.dataframe(nunca_f)
 
-        btn_nunca = st.download_button(
-            label="Exportar Técnicos Nunca Inspecionados",
-            data=exportar_excel(nunca_filtrado),
-            file_name="tecnicos_nunca_inspecionados.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    else:
-        st.info("Nenhum técnico nunca inspecionado encontrado.")
+    st.download_button(
+        label="📥 Baixar Últimas Inspeções (.xlsx)",
+        data=exportar_excel(ultimas_f),
+        file_name="ultimas_inspecoes.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    st.download_button(
+        label="📥 Baixar Pendentes (.xlsx)",
+        data=exportar_excel(pendentes_f),
+        file_name="pendentes.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    st.download_button(
+        label="📥 Baixar Técnicos Nunca Inspecionados (.xlsx)",
+        data=exportar_excel(nunca_f),
+        file_name="tecnicos_nunca_inspecionados.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
 
 if __name__ == "__main__":
     show()
