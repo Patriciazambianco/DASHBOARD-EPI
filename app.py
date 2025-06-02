@@ -7,11 +7,15 @@ def carregar_dados(uploaded_file):
     return pd.read_excel(uploaded_file)
 
 def gerar_ultima_inspecao(df):
+    # Só linhas com data de inspeção
     df_inspec = df[df['DATA_INSPECAO'].notnull()]
+    # Ordena pra pegar a última
     df_inspec = df_inspec.sort_values(by='DATA_INSPECAO', ascending=False)
+    # Remove duplicados (técnico + produto)
     return df_inspec.drop_duplicates(subset=['IDTEL_TECNICO', 'PRODUTO_SIMILAR'], keep='first')
 
 def gerar_nunca_inspecionados(df):
+    # Só linhas sem data de inspeção
     return df[df['DATA_INSPECAO'].isnull()]
 
 def exportar_excel(dfs_dict):
@@ -22,7 +26,6 @@ def exportar_excel(dfs_dict):
     output.seek(0)
     return output
 
-# --- Streamlit ---
 st.set_page_config(page_title="Dashboard EPI", layout="wide")
 st.title("📋 Dashboard de Inspeções de EPI")
 
@@ -31,30 +34,35 @@ uploaded_file = st.file_uploader("📂 Envie o arquivo Excel com os dados", type
 if uploaded_file:
     df = carregar_dados(uploaded_file)
 
-    # Filtros de gerente e coordenador
-    gerentes = ['Todos'] + sorted(df['GERENTE'].dropna().unique().tolist())
-    coordenadores = ['Todos'] + sorted(df['COORDENADOR'].dropna().unique().tolist())
+    # Filtros
+    gerentes = ['Todos'] + sorted(df['GERENTE'].dropna().unique())
+    coordenadores = ['Todos'] + sorted(df['COORDENADOR'].dropna().unique())
 
     gerente_selecionado = st.selectbox("Filtrar por Gerente", gerentes)
-    if gerente_selecionado != 'Todos':
-        df = df[df['GERENTE'] == gerente_selecionado]
-
     coordenador_selecionado = st.selectbox("Filtrar por Coordenador", coordenadores)
+
+    # Aplica filtro no df original antes de gerar as tabelas
+    df_filtrado = df.copy()
+
+    if gerente_selecionado != 'Todos':
+        df_filtrado = df_filtrado[df_filtrado['GERENTE'] == gerente_selecionado]
+
     if coordenador_selecionado != 'Todos':
-        df = df[df['COORDENADOR'] == coordenador_selecionado]
+        df_filtrado = df_filtrado[df_filtrado['COORDENADOR'] == coordenador_selecionado]
 
-    # Processa os dados filtrados
-    ultimas = gerar_ultima_inspecao(df)
-    nunca = gerar_nunca_inspecionados(df)
+    # Agora gera as tabelas *com o df filtrado* — é aqui que eliminamos duplicatas
+    ultimas = gerar_ultima_inspecao(df_filtrado)
+    nunca = gerar_nunca_inspecionados(df_filtrado)
 
-    total_registros = len(df)
+    # Métricas
+    total_registros = len(df_filtrado)
     total_inspecionados = len(ultimas)
     total_pendentes = len(nunca)
 
-    pct_inspecionados = (total_inspecionados / total_registros) * 100 if total_registros > 0 else 0
-    pct_pendentes = (total_pendentes / total_registros) * 100 if total_registros > 0 else 0
+    pct_inspecionados = (total_inspecionados / total_registros * 100) if total_registros else 0
+    pct_pendentes = (total_pendentes / total_registros * 100) if total_registros else 0
 
-    # Exibe os cards resumidos
+    # Cards de resumo
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Registros", total_registros)
     col2.metric("Inspecionados (%)", f"{pct_inspecionados:.1f}%")
@@ -67,7 +75,7 @@ if uploaded_file:
     st.subheader("⚠️ Técnicos que Nunca Foram Inspecionados")
     st.dataframe(nunca)
 
-    # Botão para exportar
+    # Exportação
     output_excel = exportar_excel({'Ultima_Inspecao': ultimas, 'Nunca_Inspecionados': nunca})
 
     st.download_button(
