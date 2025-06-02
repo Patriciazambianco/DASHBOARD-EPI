@@ -10,18 +10,21 @@ def carregar_dados():
     df = pd.read_excel("LISTA DE VERIFICAÇÃO EPI.xlsx", engine="openpyxl")
     df.columns = df.columns.str.strip()
 
+    st.write("🕵️‍♀️ Colunas encontradas no arquivo:", df.columns.tolist())
+
     col_tec = [col for col in df.columns if 'TECNICO' in col.upper()]
     col_prod = [col for col in df.columns if 'PRODUTO' in col.upper()]
     col_data = [col for col in df.columns if 'INSPECAO' in col.upper()]
 
     if not col_tec or not col_prod or not col_data:
         st.error("❌ Verifique se o arquivo contém colunas de TÉCNICO, PRODUTO e INSPEÇÃO.")
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame()
 
     tecnico_col = col_tec[0]
     produto_col = col_prod[0]
     data_col = col_data[0]
 
+    # Renomear colunas para padrão
     df.rename(columns={
         'GERENTE': 'GERENTE_IMEDIATO',
         'SITUAÇÃO CHECK LIST': 'Status_Final'
@@ -29,37 +32,45 @@ def carregar_dados():
 
     df['Data_Inspecao'] = pd.to_datetime(df[data_col], errors='coerce')
 
-    # Últimas inspeções por Técnico+Produto
+    base = df[[tecnico_col, produto_col]].drop_duplicates()
+
+    # Linhas com inspeção feita (última inspeção)
     ultimas = (
         df.dropna(subset=['Data_Inspecao'])
         .sort_values('Data_Inspecao')
         .groupby([tecnico_col, produto_col], as_index=False)
         .last()
     )
-    ultimas.rename(columns={tecnico_col: 'TECNICO', produto_col: 'PRODUTO'}, inplace=True)
-    ultimas['Status_Final'] = ultimas['Status_Final'].str.upper()
+
+    # Linhas sem nenhuma inspeção (com data de inspeção vazia)
+    nunca = (
+        df[df['Data_Inspecao'].isna()]
+        .drop_duplicates(subset=[tecnico_col, produto_col])
+    )
+
+    # Mescla para ter o conjunto completo para últimos dados
+    final = pd.merge(base, ultimas, on=[tecnico_col, produto_col], how='left')
+
+    # Ajustar nomes
+    final.rename(columns={
+        tecnico_col: 'TECNICO',
+        produto_col: 'PRODUTO'
+    }, inplace=True)
+
+    nunca.rename(columns={
+        tecnico_col: 'TECNICO',
+        produto_col: 'PRODUTO'
+    }, inplace=True)
+
+    # Ajustar colunas de status
+    final['Status_Final'] = final['Status_Final'].str.upper()
+    nunca['Status_Final'] = nunca['Status_Final'].str.upper()
 
     hoje = pd.Timestamp.now().normalize()
-    ultimas['Dias_Sem_Inspecao'] = (hoje - ultimas['Data_Inspecao']).dt.days
-    ultimas['Vencido'] = ultimas['Dias_Sem_Inspecao'] > 180
+    final['Dias_Sem_Inspecao'] = (hoje - final['Data_Inspecao']).dt.days
+    final['Vencido'] = final['Dias_Sem_Inspecao'] > 180
 
-    pares_inspecionados = set(zip(ultimas['TECNICO'], ultimas['PRODUTO']))
-
-    # Nunca inspecionados: linhas com Data_Inspecao vazia e que não estão em ultimas
-    nunca_inspecionados = df[df['Data_Inspecao'].isna()].copy()
-    nunca_inspecionados.rename(columns={tecnico_col: 'TECNICO', produto_col: 'PRODUTO'}, inplace=True)
-    nunca_inspecionados = nunca_inspecionados.drop_duplicates(subset=['TECNICO', 'PRODUTO'])
-    nunca_inspecionados = nunca_inspecionados[
-        ~nunca_inspecionados[['TECNICO', 'PRODUTO']].apply(tuple, axis=1).isin(pares_inspecionados)
-    ]
-
-    nunca_inspecionados['Status_Final'] = nunca_inspecionados['Status_Final'].str.upper()
-    nunca_inspecionados['Data_Inspecao'] = pd.NaT
-    nunca_inspecionados['Dias_Sem_Inspecao'] = None
-    nunca_inspecionados['Vencido'] = True
-
-    return ultimas, nunca_inspecionados
-
+    return final, nunca
 
 def exportar_excel(df):
     buffer = BytesIO()
@@ -67,11 +78,12 @@ def exportar_excel(df):
         df.to_excel(writer, index=False, sheet_name='Pendentes')
     return buffer.getvalue()
 
-
 def plot_pie_chart(df, group_col, title_prefix):
     grouped = df.groupby(group_col)['Status_Final'].value_counts().unstack(fill_value=0)
-    if 'OK' in grouped.columns and 'PENDENTE' in grouped.columns:
-        grouped = grouped[['OK', 'PENDENTE']]
+    # Verificar se tem colunas OK e PENDENTE, para evitar erro
+    cols_esperadas = ['OK', 'PENDENTE']
+    cols_existentes = [c for c in cols_esperadas if c in grouped.columns]
+    grouped = grouped[cols_existentes] if cols_existentes else grouped
 
     charts = []
     for grupo in grouped.index:
@@ -89,56 +101,50 @@ def plot_pie_chart(df, group_col, title_prefix):
         charts.append(fig)
     return charts
 
-
 def color_metric(label, value, color):
     st.markdown(f"""
-        <div style='
-            padding:8px; 
-            border-radius:8px; 
-            background-color:{color}; 
-            color:white; 
-            text-align:center;
-            font-family:sans-serif;
-            font-size:13px;
-            '>
-            <h5 style='margin-bottom:4px'>{label}</h5>
-            <h3 style='margin-top:0'>{value:.1f}%</h3>
-        </div>
-        """, unsafe_allow_html=True)
-
+    <div style='
+        padding:8px; 
+        border-radius:8px; 
+        background-color:{color}; 
+        color:white; 
+        text-align:center;
+        font-family:sans-serif;
+        font-size:13px;
+        '>
+        <h5 style='margin-bottom:4px'>{label}</h5>
+        <h3 style='margin-top:0'>{value:.1f}%</h3>
+    </div>
+    """, unsafe_allow_html=True)
 
 def show():
     st.title("📊 Dashboard de Inspeções EPI")
 
-    ultimas, nunca_inspecionados = carregar_dados()
-    if ultimas.empty and nunca_inspecionados.empty:
-        st.warning("Nenhum dado para mostrar!")
+    final, nunca = carregar_dados()
+    if final.empty and nunca.empty:
         return
 
-    # Filtros básicos baseados nas últimas inspeções
-    gerentes = sorted(ultimas['GERENTE_IMEDIATO'].dropna().unique())
+    gerentes = sorted(final['GERENTE_IMEDIATO'].dropna().unique())
     gerente_sel = st.sidebar.selectbox("👨‍💼 Selecione o Gerente", ["Todos"] + gerentes)
 
     if gerente_sel != "Todos":
-        ultimas_filtrado = ultimas[ultimas['GERENTE_IMEDIATO'] == gerente_sel]
-        nunca_filtrado = nunca_inspecionados[nunca_inspecionados['GERENTE_IMEDIATO'] == gerente_sel]
+        final_filtrado = final[final['GERENTE_IMEDIATO'] == gerente_sel]
+        nunca_filtrado = nunca[nunca['GERENTE_IMEDIATO'] == gerente_sel]
     else:
-        ultimas_filtrado = ultimas.copy()
-        nunca_filtrado = nunca_inspecionados.copy()
+        final_filtrado = final.copy()
+        nunca_filtrado = nunca.copy()
 
-    coordenadores = sorted(ultimas_filtrado['COORDENADOR'].dropna().unique())
+    coordenadores = sorted(final_filtrado['COORDENADOR'].dropna().unique())
     coord_sel = st.sidebar.multiselect("👩‍💼 Coordenador", options=coordenadores, default=coordenadores)
 
-    ultimas_filtrado = ultimas_filtrado[ultimas_filtrado['COORDENADOR'].isin(coord_sel)]
-    nunca_filtrado = nunca_filtrado[outra_filtrado['COORDENADOR'].isin(coord_sel)]
+    final_filtrado = final_filtrado[final_filtrado['COORDENADOR'].isin(coord_sel)]
+    nunca_filtrado = nunca_filtrado[nunca_filtrado['COORDENADOR'].isin(coord_sel)]
 
     so_vencidos = st.sidebar.checkbox("🔴 Mostrar apenas vencidos > 180 dias")
     if so_vencidos:
-        ultimas_filtrado = ultimas_filtrado[ultimas_filtrado['Vencido']]
-        nunca_filtrado = nunca_filtrado[never_filtrado['Vencido']]  # sempre True, mas mantemos pra padrão
+        final_filtrado = final_filtrado[final_filtrado['Vencido']]
 
-    # Exibir download para os pendentes (status "PENDENTE" nas últimas inspeções)
-    df_pendentes = ultimas_filtrado[ultimas_filtrado['Status_Final'] == 'PENDENTE']
+    df_pendentes = final_filtrado[final_filtrado['Status_Final'] == 'PENDENTE']
     st.download_button(
         label="📥 Baixar Pendentes (.xlsx)",
         data=exportar_excel(df_pendentes),
@@ -146,17 +152,17 @@ def show():
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    # Métricas
-    total = ultimas_filtrado.shape[0] if ultimas_filtrado.shape[0] > 0 else 1
-    pct_pendentes = (ultimas_filtrado['Status_Final'] == 'PENDENTE').sum() / total * 100
-    pct_ok = (ultimas_filtrado['Status_Final'] == 'OK').sum() / total * 100
+    total = final_filtrado.shape[0] if final_filtrado.shape[0] > 0 else 1
+    pct_pendentes = (final_filtrado['Status_Final'] == 'PENDENTE').sum() / total * 100
+    pct_ok = (final_filtrado['Status_Final'] == 'OK').sum() / total * 100
 
-    num_tecnicos = ultimas_filtrado['TECNICO'].nunique()
-    tecnicos_inspecionaram = ultimas_filtrado[ultimas_filtrado['Data_Inspecao'].notnull()]['TECNICO'].nunique()
+    num_tecnicos = final_filtrado['TECNICO'].nunique()
+    tecnicos_inspecionaram = final_filtrado[final_filtrado['Data_Inspecao'].notnull()]['TECNICO'].nunique()
     pct_tecnicos_inspecionaram = tecnicos_inspecionaram / num_tecnicos * 100 if num_tecnicos > 0 else 0
     pct_tecnicos_nao_inspecionaram = 100 - pct_tecnicos_inspecionaram
 
     col1, col2, col3, col4 = st.columns(4)
+    color_metric("% OK", pct_ok, "#2a9d8f")
     with col1:
         color_metric("% OK", pct_ok, "#2a9d8f")
     with col2:
@@ -168,8 +174,8 @@ def show():
 
     st.markdown("---")
 
-    st.subheader("🍕 Status das Últimas Inspeções por Gerente")
-    graficos_gerente = plot_pie_chart(ultimas_filtrado, 'GERENTE_IMEDIATO', "Gerente")
+    st.subheader("🍕 Status das Inspeções por Gerente")
+    graficos_gerente = plot_pie_chart(final_filtrado, 'GERENTE_IMEDIATO', "Gerente")
     for i in range(0, len(graficos_gerente), 3):
         cols = st.columns(3)
         for j, fig in enumerate(graficos_gerente[i:i+3]):
@@ -177,8 +183,8 @@ def show():
 
     st.markdown("---")
 
-    st.subheader("🍕 Status das Últimas Inspeções por Coordenador")
-    graficos_coord = plot_pie_chart(ultimas_filtrado, 'COORDENADOR', "Coordenador")
+    st.subheader("🍕 Status das Inspeções por Coordenador")
+    graficos_coord = plot_pie_chart(final_filtrado, 'COORDENADOR', "Coordenador")
     for i in range(0, len(graficos_coord), 3):
         cols = st.columns(3)
         for j, fig in enumerate(graficos_coord[i:i+3]):
@@ -186,8 +192,13 @@ def show():
 
     st.markdown("---")
 
-    st.subheader("📋 Técnicos que nunca foram inspecionados")
-    st.dataframe(nunca_filtrado[['TECNICO', 'PRODUTO', 'GERENTE_IMEDIATO', 'Status_Final']].reset_index(drop=True))
+    st.subheader("📋 Técnicos com Última Inspeção")
+    st.dataframe(final_filtrado.reset_index(drop=True), height=400)
+
+    st.markdown("---")
+
+    st.subheader("📋 Técnicos que Nunca Foram Inspecionados")
+    st.dataframe(nunca_filtrado[['TECNICO', 'PRODUTO', 'GERENTE_IMEDIATO', 'Status_Final']].reset_index(drop=True), height=300)
 
 
 if __name__ == "__main__":
