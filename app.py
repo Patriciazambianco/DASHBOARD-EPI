@@ -2,66 +2,81 @@ import streamlit as st
 import pandas as pd
 import io
 
-# Função para exportar DataFrame para Excel e retornar bytes para download
+def color_badge(status):
+    colors = {
+        'OK': 'background-color: #4CAF50; color: white; font-weight: bold;',
+        'Pendente': 'background-color: #FF9800; color: white; font-weight: bold;',
+        'Reprovado': 'background-color: #F44336; color: white; font-weight: bold;',
+        'Em Análise': 'background-color: #2196F3; color: white; font-weight: bold;',
+    }
+    return colors.get(status, '')
+
+def style_badges(df):
+    return df.style.applymap(lambda v: color_badge(v), subset=['STATUS CHECK LIST'])
+
 def exportar_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Dados')
-        # Nada de writer.save() aqui, o with já faz isso
+        writer.save()
     return output.getvalue()
 
-# Função para formatar badges coloridos
-def badge_color(text, color):
-    return f'<span style="background-color:{color};color:white;padding:3px 8px;border-radius:8px;">{text}</span>'
-
-# Função principal do app
 def show():
-    st.title("Dashboard de Inspeções EPI")
+    st.title("Dashboard EPI - Técnicos Inspecionados e Nunca Inspecionados")
 
-    # Simule a leitura dos dados (substitua pelo seu Excel)
-    # Espera-se um DataFrame com pelo menos: Técnico, Produto, Data_Inspeção, Coordenador, Gerente, etc.
-    df = pd.read_excel("seus_dados.xlsx")
+    uploaded_file = st.file_uploader("Faça upload do arquivo Excel (.xlsx)", type=["xlsx"])
+    if not uploaded_file:
+        st.info("Por favor, faça upload do arquivo Excel para continuar.")
+        return
 
-    # Última inspeção por Técnico + Produto
-    ultimas = (df.dropna(subset=['Data_Inspeção'])
-                .sort_values('Data_Inspeção')
-                .groupby(['Técnico', 'Produto'])
-                .last()
-                .reset_index())
+    df = pd.read_excel(uploaded_file)
+    df['DATA_INSPECAO'] = pd.to_datetime(df['DATA_INSPECAO'], errors='coerce')
 
-    # Técnicos que NUNCA foram inspecionados (left join pra pegar só os que não têm inspeção)
-    tecnico_produto = df[['Técnico', 'Produto']].drop_duplicates()
+    # Filtros dinâmicos
+    gerentes = df['GERENTE'].dropna().unique()
+    gerente_sel = st.multiselect("Selecione Gerente(s)", options=gerentes, default=gerentes)
 
-    # Criar df com chave para merge
-    ultimas_chave = ultimas[['Técnico', 'Produto']].copy()
+    df = df[df['GERENTE'].isin(gerente_sel)]
 
-    nunca = tecnico_produto.merge(ultimas_chave, on=['Técnico', 'Produto'], how='left', indicator=True)
-    nunca = nunca[nenhuma := nunca['_merge'] == 'left_only'].drop(columns=['_merge'])
+    coordenadores = df['COORDENADOR'].dropna().unique()
+    coord_sel = st.multiselect("Selecione Coordenador(es)", options=coordenadores, default=coordenadores)
 
-    # Agora pegamos os dados completos dos técnicos que nunca foram inspecionados
-    # Se quiser, traga mais colunas de df original
-    nunca_completo = df.merge(nunca[['Técnico', 'Produto']], on=['Técnico', 'Produto'], how='inner').drop_duplicates(subset=['Técnico', 'Produto'])
+    df = df[df['COORDENADOR'].isin(coord_sel)]
 
-    # Badges para status
-    ultimas['Status'] = ultimas['Data_Inspeção'].apply(lambda d: badge_color('Inspecionado', '#28a745'))
-    nunca_completo['Status'] = badge_color('Nunca Inspecionado', '#dc3545')
+    supervisores = df['SUPERVISOR'].dropna().unique()
+    sup_sel = st.multiselect("Selecione Supervisor(es)", options=supervisores, default=supervisores)
 
-    # Mostrar tabelas
-    st.subheader("Últimas Inspeções Realizadas")
-    st.write(ultimas.style.format({'Status': lambda x: x}).hide_columns(['Status']), unsafe_allow_html=True)
+    df = df[df['SUPERVISOR'].isin(sup_sel)]
 
-    st.subheader("Técnicos que Nunca Foram Inspecionados")
-    st.write(nunca_completo.style.format({'Status': lambda x: x}), unsafe_allow_html=True)
+    # Separando técnicos que já tiveram inspeção e que nunca tiveram
+    inspecionados = df[df['DATA_INSPECAO'].notna()]
+    nunca_inspecionados = df[df['DATA_INSPECAO'].isna()]
 
-    # Botões para exportar Excel
-    if st.button("Exportar Últimas Inspeções"):
-        excel_data = exportar_excel(ultimas)
-        st.download_button(label="Baixar Últimas Inspeções", data=excel_data, file_name='ultimas_inspecoes.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    st.subheader("Técnicos que já tiveram inspeção")
+    st.dataframe(style_badges(inspecionados), use_container_width=True)
 
-    if st.button("Exportar Técnicos Nunca Inspecionados"):
-        excel_data = exportar_excel(nunca_completo)
-        st.download_button(label="Baixar Nunca Inspecionados", data=excel_data, file_name='tecnicos_nunca_inspecionados.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    st.subheader("Técnicos nunca inspecionados")
+    st.dataframe(nunca_inspecionados, use_container_width=True)
 
+    # Exportação dos dados filtrados
+    excel_inspecionados = exportar_excel(inspecionados)
+    excel_nunca = exportar_excel(nunca_inspecionados)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.download_button(
+            label="Exportar Técnicos com Inspeção",
+            data=excel_inspecionados,
+            file_name='tecnicos_com_inspecao.xlsx',
+            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    with col2:
+        st.download_button(
+            label="Exportar Técnicos Nunca Inspecionados",
+            data=excel_nunca,
+            file_name='tecnicos_nunca_inspecionados.xlsx',
+            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
 
 if __name__ == "__main__":
     show()
