@@ -7,24 +7,30 @@ from io import BytesIO
 def carregar_dados(uploaded_file):
     df = pd.read_excel(uploaded_file)
     df['DATA_INSPECAO'] = pd.to_datetime(df['DATA_INSPECAO'], errors='coerce')
+    # Tratar data "falsa"
     df.loc[df['DATA_INSPECAO'] == pd.Timestamp('2001-01-01'), 'DATA_INSPECAO'] = pd.NaT
-    
-    # Padroniza strings pra evitar duplicados “escondidos”
+    # Padronizar strings (tirar espaços, maiúsculas)
     df['IDTEL_TECNICO'] = df['IDTEL_TECNICO'].astype(str).str.strip()
     df['PRODUTO_SIMILAR'] = df['PRODUTO_SIMILAR'].astype(str).str.strip().str.upper()
-    
-    # Remove duplicados exatos com base nas colunas essenciais
-    df = df.drop_duplicates(subset=['IDTEL_TECNICO', 'PRODUTO_SIMILAR', 'DATA_INSPECAO'])
-    
     return df
 
-def gerar_ultima_inspecao(df):
-    df_inspec = df[df['DATA_INSPECAO'].notnull()]
-    df_inspec = df_inspec.sort_values(by='DATA_INSPECAO', ascending=False)
-    return df_inspec.drop_duplicates(subset=['IDTEL_TECNICO', 'PRODUTO_SIMILAR'], keep='first')
+def consolidar_ultima_inspecao_ou_pendente(df):
+    # Ordena para facilitar pegar a última inspeção
+    df_sorted = df.sort_values(['IDTEL_TECNICO', 'PRODUTO_SIMILAR', 'DATA_INSPECAO'], ascending=[True, True, False])
 
-def gerar_nunca_inspecionados(df):
-    return df[df['DATA_INSPECAO'].isnull()]
+    # Função que escolhe a linha correta para cada grupo Técnico+Produto
+    def escolher_linha(grp):
+        if grp['DATA_INSPECAO'].notna().any():
+            # Pega a linha com a maior DATA_INSPECAO
+            return grp.loc[grp['DATA_INSPECAO'].idxmax()]
+        else:
+            # Se não tem nenhuma data, traz a primeira linha pendente (DATA_INSPECAO NaT)
+            return grp.iloc[0]
+
+    # Aplica o agrupamento e seleção
+    df_final = df_sorted.groupby(['IDTEL_TECNICO', 'PRODUTO_SIMILAR'], group_keys=False).apply(escolher_linha)
+
+    return df_final.reset_index(drop=True)
 
 def exportar_excel(dfs_dict):
     output = BytesIO()
@@ -59,25 +65,19 @@ if uploaded_file:
     if coordenador_selecionado != 'Todos':
         df_filtrado = df_filtrado[df_filtrado['COORDENADOR'] == coordenador_selecionado]
 
-    # Remove duplicados exatos no filtro também para garantir
-    df_filtrado = df_filtrado.drop_duplicates(subset=['IDTEL_TECNICO', 'PRODUTO_SIMILAR', 'DATA_INSPECAO'])
-
-    ultimas = gerar_ultima_inspecao(df_filtrado)
-    nunca = gerar_nunca_inspecionados(df_filtrado)
+    df_resultado = consolidar_ultima_inspecao_ou_pendente(df_filtrado)
 
     total_registros = len(df_filtrado)
-    total_inspecionados = len(ultimas)
-    total_pendentes = len(nunca)
+    total_inspecionados = df_resultado['DATA_INSPECAO'].notna().sum()
+    total_pendentes = df_resultado['DATA_INSPECAO'].isna().sum()
     pct_inspecionados = (total_inspecionados / total_registros * 100) if total_registros else 0
     pct_pendentes = (total_pendentes / total_registros * 100) if total_registros else 0
 
-    # Cards
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Registros", total_registros)
     col2.metric("Inspecionados (%)", f"{pct_inspecionados:.1f}%")
     col3.metric("Pendentes (%)", f"{pct_pendentes:.1f}%")
 
-    # Gráfico pizza - Inspecionados x Pendentes
     fig = px.pie(
         names=["Inspecionados", "Pendentes"],
         values=[total_inspecionados, total_pendentes],
@@ -86,13 +86,10 @@ if uploaded_file:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("✅ Última Inspeção por Técnico + Produto")
-    st.dataframe(ultimas)
+    st.subheader("✅ Última Inspeção ou Pendentes por Técnico + Produto")
+    st.dataframe(df_resultado)
 
-    st.subheader("⚠️ Técnicos que Nunca Foram Inspecionados ou com Data 01/01/2001")
-    st.dataframe(nunca)
-
-    output_excel = exportar_excel({'Ultima_Inspecao': ultimas, 'Nunca_Inspecionados': nunca})
+    output_excel = exportar_excel({'Resultado': df_resultado})
 
     st.download_button(
         label="⬇️ Baixar Excel com Resultados",
