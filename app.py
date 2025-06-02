@@ -7,30 +7,23 @@ from io import BytesIO
 def carregar_dados(uploaded_file):
     df = pd.read_excel(uploaded_file)
     df['DATA_INSPECAO'] = pd.to_datetime(df['DATA_INSPECAO'], errors='coerce')
-    # Tratar data "falsa"
     df.loc[df['DATA_INSPECAO'] == pd.Timestamp('2001-01-01'), 'DATA_INSPECAO'] = pd.NaT
-    # Padronizar strings (tirar espaços, maiúsculas)
     df['IDTEL_TECNICO'] = df['IDTEL_TECNICO'].astype(str).str.strip()
     df['PRODUTO_SIMILAR'] = df['PRODUTO_SIMILAR'].astype(str).str.strip().str.upper()
     return df
 
 def consolidar_ultima_inspecao_ou_pendente(df):
-    # Ordena para facilitar pegar a última inspeção
-    df_sorted = df.sort_values(['IDTEL_TECNICO', 'PRODUTO_SIMILAR', 'DATA_INSPECAO'], ascending=[True, True, False])
+    # Agrupa por Técnico + Produto e acha a data máxima (última inspeção) dentro do grupo
+    ultima_data = df.groupby(['IDTEL_TECNICO', 'PRODUTO_SIMILAR'])['DATA_INSPECAO'].max().reset_index()
 
-    # Função que escolhe a linha correta para cada grupo Técnico+Produto
-    def escolher_linha(grp):
-        if grp['DATA_INSPECAO'].notna().any():
-            # Pega a linha com a maior DATA_INSPECAO
-            return grp.loc[grp['DATA_INSPECAO'].idxmax()]
-        else:
-            # Se não tem nenhuma data, traz a primeira linha pendente (DATA_INSPECAO NaT)
-            return grp.iloc[0]
+    # Agora juntamos essa última data com o df original para pegar todas as colunas daquela linha
+    # Se a última data for NaT, vai tentar casar com linhas com DATA_INSPECAO NaT
+    df_merged = pd.merge(df, ultima_data, on=['IDTEL_TECNICO', 'PRODUTO_SIMILAR', 'DATA_INSPECAO'], how='inner')
 
-    # Aplica o agrupamento e seleção
-    df_final = df_sorted.groupby(['IDTEL_TECNICO', 'PRODUTO_SIMILAR'], group_keys=False).apply(escolher_linha)
+    # Removemos duplicatas que podem surgir se houver várias linhas idênticas
+    df_merged = df_merged.drop_duplicates(subset=['IDTEL_TECNICO', 'PRODUTO_SIMILAR'])
 
-    return df_final.reset_index(drop=True)
+    return df_merged.reset_index(drop=True)
 
 def exportar_excel(dfs_dict):
     output = BytesIO()
@@ -65,18 +58,32 @@ if uploaded_file:
     if coordenador_selecionado != 'Todos':
         df_filtrado = df_filtrado[df_filtrado['COORDENADOR'] == coordenador_selecionado]
 
+    # Debug rápido pra conferir números:
+    st.write(f"Linhas após filtro: {len(df_filtrado)}")
+    st.write(f"Técnico + Produto únicos após filtro: {df_filtrado[['IDTEL_TECNICO', 'PRODUTO_SIMILAR']].drop_duplicates().shape[0]}")
+
     df_resultado = consolidar_ultima_inspecao_ou_pendente(df_filtrado)
 
     total_registros = len(df_filtrado)
+    total_unicos = df_filtrado[['IDTEL_TECNICO', 'PRODUTO_SIMILAR']].drop_duplicates().shape[0]
     total_inspecionados = df_resultado['DATA_INSPECAO'].notna().sum()
     total_pendentes = df_resultado['DATA_INSPECAO'].isna().sum()
-    pct_inspecionados = (total_inspecionados / total_registros * 100) if total_registros else 0
-    pct_pendentes = (total_pendentes / total_registros * 100) if total_registros else 0
+
+    # Total únicos é o total real de técnico+produto únicos
+    # total_inspecionados + total_pendentes devem ser iguais a total_unicos
+    st.write(f"Técnico + Produto únicos consolidados: {total_unicos}")
+    st.write(f"Consolidados com inspeção: {total_inspecionados}")
+    st.write(f"Consolidados pendentes: {total_pendentes}")
+    st.write(f"Soma inspecionados + pendentes: {total_inspecionados + total_pendentes}")
+
+    pct_inspecionados = (total_inspecionados / total_unicos * 100) if total_unicos else 0
+    pct_pendentes = (total_pendentes / total_unicos * 100) if total_unicos else 0
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("Total Registros", total_registros)
-    col2.metric("Inspecionados (%)", f"{pct_inspecionados:.1f}%")
-    col3.metric("Pendentes (%)", f"{pct_pendentes:.1f}%")
+    col1.metric("Total Registros (linhas no filtro)", total_registros)
+    col2.metric("Técnico+Produto Únicos", total_unicos)
+    col3.metric("Inspecionados (%)", f"{pct_inspecionados:.1f}%")
+    col1.metric("Pendentes (%)", f"{pct_pendentes:.1f}%")
 
     fig = px.pie(
         names=["Inspecionados", "Pendentes"],
