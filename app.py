@@ -61,12 +61,11 @@ def exportar_excel(df):
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Dados')
-        writer.save()
+        # writer.save()  <-- REMOVIDO, pois dentro do 'with' não precisa
     return buffer.getvalue()
 
 def plot_pie_chart(df, group_col, title_prefix):
     grouped = df.groupby(group_col)['Status_Final'].value_counts().unstack(fill_value=0)
-    # Garantir que colunas OK e PENDENTE existam
     for status in ['OK', 'PENDENTE']:
         if status not in grouped.columns:
             grouped[status] = 0
@@ -134,7 +133,6 @@ def show():
 
     df_pendentes = final_filtrado[final_filtrado['Status_Final'] == 'PENDENTE']
 
-    # Botões de download
     st.download_button(
         label="📥 Baixar Pendentes (.xlsx)",
         data=exportar_excel(df_pendentes),
@@ -160,10 +158,14 @@ def show():
 
     col1, col2, col3, col4 = st.columns(4)
 
-    color_metric("% OK", pct_ok, "#2a9d8f")
-    color_metric("% Pendentes", pct_pendentes, "#e76f51")
-    color_metric("% Técnicos com Inspeção", pct_tecnicos_inspecionaram, "#f4a261")
-    color_metric("% Técnicos sem Inspeção", pct_tecnicos_nao_inspecionaram, "#e76f51")
+    with col1:
+        color_metric("% OK", pct_ok, "#2a9d8f")
+    with col2:
+        color_metric("% Pendentes", pct_pendentes, "#e76f51")
+    with col3:
+        color_metric("% Técnicos com Inspeção", pct_tecnicos_inspecionaram, "#f4a261")
+    with col4:
+        color_metric("% Técnicos sem Inspeção", pct_tecnicos_nao_inspecionaram, "#e76f51")
 
     st.markdown("---")
 
