@@ -2,81 +2,67 @@ import streamlit as st
 import pandas as pd
 import io
 
-def color_badge(status):
-    colors = {
-        'OK': 'background-color: #4CAF50; color: white; font-weight: bold;',
-        'Pendente': 'background-color: #FF9800; color: white; font-weight: bold;',
-        'Reprovado': 'background-color: #F44336; color: white; font-weight: bold;',
-        'Em Análise': 'background-color: #2196F3; color: white; font-weight: bold;',
-    }
-    return colors.get(status, '')
-
-def style_badges(df):
-    return df.style.applymap(lambda v: color_badge(v), subset=['STATUS CHECK LIST'])
-
+# Função para exportar DataFrame para Excel e retornar bytes para download
 def exportar_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Dados')
-        writer.save()
     return output.getvalue()
 
+@st.cache_data
+def carregar_dados():
+    # Troque 'seus_dados.xlsx' pelo caminho do seu arquivo real
+    df = pd.read_excel('seus_dados.xlsx')
+    return df
+
 def show():
-    st.title("Dashboard EPI - Técnicos Inspecionados e Nunca Inspecionados")
+    st.title("Dashboard de Inspeções EPI")
 
-    uploaded_file = st.file_uploader("Faça upload do arquivo Excel (.xlsx)", type=["xlsx"])
-    if not uploaded_file:
-        st.info("Por favor, faça upload do arquivo Excel para continuar.")
-        return
+    df = carregar_dados()
 
-    df = pd.read_excel(uploaded_file)
+    # Certifique-se que a coluna de datas está no formato datetime
     df['DATA_INSPECAO'] = pd.to_datetime(df['DATA_INSPECAO'], errors='coerce')
 
-    # Filtros dinâmicos
-    gerentes = df['GERENTE'].dropna().unique()
-    gerente_sel = st.multiselect("Selecione Gerente(s)", options=gerentes, default=gerentes)
+    # Técnicos que já tiveram inspeção (última por técnico + produto)
+    inspecionados = (
+        df.dropna(subset=['DATA_INSPECAO'])  # só com data
+          .sort_values('DATA_INSPECAO', ascending=False)
+          .drop_duplicates(subset=['IDTEL_TECNICO', 'PRODUTO_SIMILAR'])
+    )
 
-    df = df[df['GERENTE'].isin(gerente_sel)]
+    # Técnicos que nunca tiveram inspeção — identificados via merge left_only
+    merge = pd.merge(
+        df[['IDTEL_TECNICO', 'TÉCNICO', 'PRODUTO_SIMILAR', 'COORDENADOR', 'GERENTE']].drop_duplicates(),
+        inspecionados[['IDTEL_TECNICO', 'PRODUTO_SIMILAR']],
+        on=['IDTEL_TECNICO', 'PRODUTO_SIMILAR'],
+        how='left',
+        indicator=True
+    )
 
-    coordenadores = df['COORDENADOR'].dropna().unique()
-    coord_sel = st.multiselect("Selecione Coordenador(es)", options=coordenadores, default=coordenadores)
+    nunca_inspecionados = merge[merge['_merge'] == 'left_only'].drop(columns=['_merge'])
 
-    df = df[df['COORDENADOR'].isin(coord_sel)]
+    # Exibe e exporta inspecionados
+    st.header("Técnicos com Inspeção")
+    st.dataframe(inspecionados)
 
-    supervisores = df['SUPERVISOR'].dropna().unique()
-    sup_sel = st.multiselect("Selecione Supervisor(es)", options=supervisores, default=supervisores)
+    st.download_button(
+        label="Exportar Inspecionados para Excel",
+        data=exportar_excel(inspecionados),
+        file_name="inspecionados.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
-    df = df[df['SUPERVISOR'].isin(sup_sel)]
+    # Exibe e exporta nunca inspecionados
+    st.header("Técnicos Nunca Inspecionados")
+    st.dataframe(nunca_inspecionados)
 
-    # Separando técnicos que já tiveram inspeção e que nunca tiveram
-    inspecionados = df[df['DATA_INSPECAO'].notna()]
-    nunca_inspecionados = df[df['DATA_INSPECAO'].isna()]
+    st.download_button(
+        label="Exportar Nunca Inspecionados para Excel",
+        data=exportar_excel(nunca_inspecionados),
+        file_name="nunca_inspecionados.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
-    st.subheader("Técnicos que já tiveram inspeção")
-    st.dataframe(style_badges(inspecionados), use_container_width=True)
-
-    st.subheader("Técnicos nunca inspecionados")
-    st.dataframe(nunca_inspecionados, use_container_width=True)
-
-    # Exportação dos dados filtrados
-    excel_inspecionados = exportar_excel(inspecionados)
-    excel_nunca = exportar_excel(nunca_inspecionados)
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.download_button(
-            label="Exportar Técnicos com Inspeção",
-            data=excel_inspecionados,
-            file_name='tecnicos_com_inspecao.xlsx',
-            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
-    with col2:
-        st.download_button(
-            label="Exportar Técnicos Nunca Inspecionados",
-            data=excel_nunca,
-            file_name='tecnicos_nunca_inspecionados.xlsx',
-            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     show()
+
