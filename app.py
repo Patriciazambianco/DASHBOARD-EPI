@@ -24,7 +24,7 @@ def carregar_dados():
 
     # Nunca inspecionados = base menos os que já tiveram inspeção
     nunca = pd.merge(base, com_inspecao, on=[tecnico_col, produto_col], how='left', indicator=True)
-    nunca = nunca[nenhuma = nunca['_merge'] == 'left_only'].drop(columns=['_merge'])
+    nunca = nunca[nunca['_merge'] == 'left_only'].drop(columns=['_merge'])
 
     # Última inspeção de cada técnico+produto
     ultimas = (
